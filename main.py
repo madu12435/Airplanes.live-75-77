@@ -20,6 +20,9 @@ client = discord.Client()
 # Initialize the airplanes.live API endpoint
 AIRPLANES_LIVE_API = "http://api.airplanes.live/v2/squawk/"
 
+# Set to track sent messages
+sent_messages = set()
+
 # Function to fetch data from airplanes.live API
 def fetch_aircraft_data(squawk):
     url = f"{AIRPLANES_LIVE_API}{squawk}"
@@ -33,7 +36,6 @@ def format_message(aircraft, squawk):
     aircraft_type = aircraft.get('t', 'Unknown Type')
     altitude = aircraft.get('alt_baro', 'Unknown Altitude')
     ground_speed = aircraft.get('gs', 'Unknown Speed')
-    
     # Check if lat and lon are available
     if 'lastPosition' in aircraft and 'lat' in aircraft['lastPosition'] and 'lon' in aircraft['lastPosition']:
         lat = aircraft['lastPosition']['lat']
@@ -41,14 +43,12 @@ def format_message(aircraft, squawk):
         url = f"https://globe.adsbexchange.com/?icao={hex_code}&lat={lat}&lon={lon}&zoom=13.5&showTrace={datetime.utcnow().strftime('%Y-%m-%d')}&timestamp={datetime.utcnow().timestamp()}"
     else:
         url = f"https://globe.adsbexchange.com/?icao={hex_code}&zoom=13.5&showTrace={datetime.utcnow().strftime('%Y-%m-%d')}&timestamp={datetime.utcnow().timestamp()}"
-
     alert_messages = {
         '7500': 'Hijacking',
         '7600': 'Communication Failure',
         '7700': 'Emergency'
     }
     emergency_type = alert_messages.get(squawk, 'Unknown Emergency')
-
     return f"🚨 Airplanes.live Alert: {flight} \n✈️ SQUAWK {squawk} ({emergency_type})\n🌐 {url}\n⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
 
 # Background task to continuously check for squawks
@@ -59,11 +59,19 @@ async def check_squawks():
         data = fetch_aircraft_data(squawk)
         if data.get('total', 0) > 0:
             for aircraft in data.get('ac', []):
-                message = format_message(aircraft, squawk)
-                channel = client.get_channel(CHANNEL_ID)
-                await channel.send(message)
+                hex_code = aircraft.get('hex')
+                # Check if the message for this tail number has already been sent
+                if hex_code not in sent_messages:
+                    message = format_message(aircraft, squawk)
+                    channel = client.get_channel(CHANNEL_ID)
+                    await channel.send(message)
+                    # Add to sent_messages to prevent duplicates
+                    sent_messages.add(hex_code)
         else:
             print(f"No aircraft found squawking {squawk}.")
+    # Purge sent messages set periodically
+    if datetime.utcnow().hour % 6 == 0:  # Purge every 6 hours
+        sent_messages.clear()
 
 # Event triggered when the bot is ready
 @client.event
